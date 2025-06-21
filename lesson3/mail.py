@@ -1,11 +1,16 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
 
-st.title("我的第一個Streamlit App")
+def main():
+    st.title("我的第一個Streamlit App")
+    st.write("歡迎來到我的應用程式！")
+    
+    # Load the CSV file
+    df = pd.read_csv("taiwan.csv")
+    
+    # Display the DataFrame
+    st.write("以下是 'taiwan.csv' 的內容：")
+    st.dataframe(df)
 
-st.write("這是一個簡單的Streamlit應用程式。")
-
-name = st.text_input("請輸入你的名字：")
-
-if name:
-    st.write(f"你好，{name}！")
+if __name__ == "__main__":
+    main()
