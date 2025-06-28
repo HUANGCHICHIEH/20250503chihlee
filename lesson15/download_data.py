@@ -1,13 +1,7 @@
-from.import tools
-
-
 def download_data():
-    """
+    """    
     1. 下載yfinance的4檔股票資料,股票有:2330.TW,2303.TW,2454.TW,2317.TW
     2. 在目前目錄下建立一個data的資料夾,如果已經有這個資料夾,就不建立
     3. 下載的4檔股票必需儲存為4個csv檔,檔名為2330.csv,2303.csv,2454.csv,2317.csv
     4. 如果已經有這些檔案,就不下載
     """
-
-    def main():
-    download_data()
