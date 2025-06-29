@@ -1,133 +1,204 @@
 import pandas as pd
 import yfinance as yf
 import os
+import glob
+import streamlit as st
+import plotly.express as px
+
+# -- 1. Constants and Configuration --
+DATA_DIR = 'data'
+STOCK_MAPPING = {
+    '2330': '台積電',
+    '2303': '聯電',
+    '2454': '聯發科',
+    '2317': '鴻海'
+}
+TICKERS = [f"{code}.TW" for code in STOCK_MAPPING.keys()]
+
 
 def download_data():
-    #上下3個雙引號寫function的說明
     """
-    1.下載yfinance股價數據資料：2330 台積電、2303 聯電、2454 聯發科、2317 鴻海
-    2.在目前目錄下建立一個data的資料夾，如果已經有這個資料夾，就不建立
-    3.下載的四檔股票必須儲存為4個csv檔，檔名為2330_{當天日期}.csv、2303_{當天日期}.csv
-    、2454_{當天日期}.csv、2317_{當天日期}.csv
-    4.檔案如果當天已經有下載，就不要再下載
-    5.每次下載成功後，刪除舊日期的檔案，只保留最新的一份
-    """    
-    
-    # 定義股票代碼列表
-    tickers = ['2330.TW', '2303.TW', '2454.TW', '2317.TW']
+    1. Downloads stock data for specified tickers.
+    2. Creates a 'data' directory if it doesn't exist.
+    3. Saves each stock as a CSV file named {code}_{date}.csv.
+    4. Skips download if the file for today already exists.
+    5. Deletes older files for each stock, keeping only the latest one.
+    6. Uses a single batch download for efficiency.
+    """
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
 
-    # 獲取今天的日期字串，格式為 YYYY-MM-DD
     today_date = pd.Timestamp.today().strftime('%Y-%m-%d')
 
-    # 檢查並建立data資料夾
-    data_dir = 'data'
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
+    # Check if all files for today already exist
+    all_exist = all(os.path.exists(os.path.join(DATA_DIR, f"{STOCK_MAPPING[code]}_{today_date}.csv")) for code in STOCK_MAPPING.keys())
+    if all_exist:
+        print("All stock files for today already exist. Skipping download.")
+        return
 
-    # 遍歷所有股票代碼
-    for ticker in tickers:
+    # Efficiently download all data at once
+    try:
+        print("Downloading all stock data...")
+        all_data = yf.download(TICKERS, start='2000-01-01', end=today_date, auto_adjust=True)
+        if all_data.empty:
+            print("No data downloaded. Aborting.")
+            return
+        print("Download complete.")
+    except Exception as e:
+        print(f"An error occurred during download: {e}")
+        return
+
+    # Process and save each stock's data
+    for ticker in TICKERS:
         base_code = ticker.split('.')[0]
-        # 規則 3: 建立包含今天日期的檔名
-        filename = f"{base_code}_{today_date}.csv"
-        filepath = os.path.join(data_dir, filename)
+        stock_name = STOCK_MAPPING[base_code]
+        filename_today = f"{stock_name}_{today_date}.csv"
+        filepath_today = os.path.join(DATA_DIR, filename_today)
 
-        # 規則 4: 如果當天檔案已存在，則跳過
-        if os.path.exists(filepath):
-            print(f"{filename} 當天檔案已存在，跳過下載。")
-            continue
+        # Clean up old files for this stock
+        old_files = glob.glob(os.path.join(DATA_DIR, f"{stock_name}_*.csv"))
+        for old_file in old_files:
+            if old_file != filepath_today:
+                try:
+                    os.remove(old_file)
+                    print(f"Removed old file: {old_file}")
+                except OSError as e:
+                    print(f"Error removing file {old_file}: {e}")
 
+        # Extract and save the data for the current stock
         try:
-            # 下載數據
-            print(f"下載股票數據： {ticker}...")
-            data = yf.download(ticker, start='2024-01-01',
-                               end=today_date,
-                               auto_adjust=True,
-                               progress=False)  # 關閉下載進度條，讓輸出更簡潔
-
-            if data.empty:
-                print(f"找不到 {ticker} 的數據或日期範圍內無資料，跳過。")
+            stock_data = all_data.loc[:, (slice(None), ticker)]
+            stock_data.columns = stock_data.columns.droplevel(1) # Flatten MultiIndex
+            if stock_data.empty:
+                print(f"No data for {ticker}, skipping save.")
                 continue
-
-            data.to_csv(filepath)
-            print(f"儲存 {ticker} 至 {filepath}")
-
-            # 規則 5: 刪除舊檔案
-            print(f"正在清理 {base_code} 的舊檔案...")
-            for old_file in os.listdir(data_dir):
-                if old_file.startswith(f"{base_code}_") and old_file != filename:
-                    os.remove(os.path.join(data_dir, old_file))
-                    print(f"已刪除舊檔案： {old_file}")
+            stock_data.to_csv(filepath_today, encoding='utf-8-sig')
+            print(f"Saved {ticker} ({stock_name}) to {filepath_today}")
+        except KeyError:
+            print(f"Could not find data for {ticker} in downloaded set.")
         except Exception as e:
-            print(f"下載 {ticker} 時發生錯誤: {e}")
-            
+            print(f"Error saving data for {ticker}: {e}")
 
 def combine_close_prices():
     """
-    組合這四個csv檔成為一個DataFrame，要組合的只有欄位`Close`，也就是當天的收盤價
-    - 檔案名稱`2330_xxxx1`欄位名稱為`台積電`
-    - 檔案名稱`2303_xxxx1`欄位名稱為`聯電`
-    - 檔案名稱`2454_xxxx1`欄位名稱為`聯發科`
-    - 檔案名稱`2317_xxxx1`欄位名稱為`鴻海`
-    ###Date要顯示今天日期   
-    由於今日是例假日或國定假日，股市沒有開盤，所以沒有資料
-    解決方法：只顯示csv檔內所有的資料，而不是使用日期 
+    Reads the latest CSV file for each stock from the 'data' directory,
+    extracts the 'Close' column, and combines them into a single DataFrame.
     """
-    data_dir = 'data'
-    combined_df = pd.DataFrame()
-    
-    # 定義股票代碼和對應的中文名稱
-    stock_map = {
-        '2330': '台積電',
-        '2303': '聯電',
-        '2454': '聯發科',
-        '2317': '鴻海'
-    }
+    all_close_series = {}
 
-    # 遍歷資料夾中的所有檔案
-    for filename in os.listdir(data_dir):
-        if filename.endswith('.csv'):
-            filepath = os.path.join(data_dir, filename)
-            base_code = filename.split('_')[0]
-            
-            if base_code in stock_map:
-                try:
-                    df = pd.read_csv(filepath, index_col=0, parse_dates=True)
-                    if 'Close' in df.columns:
-                        # 確保 'Close' 欄位是數值型態，無法轉換的會變成 NaN
-                        close_prices = pd.to_numeric(df['Close'], errors='coerce')
-                        # 將處理過的收盤價加入 combined_df
-                        combined_df[stock_map[base_code]] = close_prices
-                    else:
-                        print(f"檔案 {filename} 中找不到 'Close' 欄位。")
-                except Exception as e:
-                    print(f"讀取檔案 {filename} 時發生錯誤: {e}")
-       
-    if combined_df.empty:
-        print("\n在 data 資料夾中找不到任何有效的股票數據。")
-        return combined_df
+    for code, name in STOCK_MAPPING.items():
+        # Find the latest CSV file for the stock
+        search_pattern = os.path.join(DATA_DIR, f"{name}_*.csv")
+        list_of_files = glob.glob(search_pattern)
+        if not list_of_files:
+            print(f"No CSV file found for {name} ({code}).")
+            continue
 
-    # 【關鍵修正】
-    # 移除索引不是有效日期的行 (例如 'Ticker' 或 'Date' 字串)
-    # pd.to_datetime 會將無法轉換的索引變成 NaT (Not a Time)
-    # .notna() 會篩選出所有轉換成功的行，也就是有效的日期
-    combined_df = combined_df[pd.to_datetime(combined_df.index, errors='coerce').notna()]
+        latest_file = max(list_of_files, key=os.path.getctime)
+        print(f"Reading latest file for {name}: {os.path.basename(latest_file)}")
 
-    # 按照日期排序，確保資料是時間序列
+        # Read the 'Close' column, setting 'Date' as the index
+        df = pd.read_csv(latest_file, index_col='Date', parse_dates=True, usecols=['Date', 'Close'])
+        all_close_series[name] = df['Close']
+
+    if not all_close_series:
+        return pd.DataFrame()
+
+    # Combine all Series into a single DataFrame
+    combined_df = pd.DataFrame(all_close_series)
     combined_df.sort_index(inplace=True)
-
     return combined_df
 
-    
-#起始點一定寫在main
-def main():
-    download_data()
-    combined_df = combine_close_prices()
-    if not combined_df.empty:
-        print("\n合併後的收盤價數據：")
-        print(combined_df.head())
-        print("...")
-        print(combined_df.tail())
+# -- 2. Streamlit Application --
+@st.cache_data(ttl=3600)  # Cache the data for 1 hour
+def load_data():
+    with st.spinner('正在下載最新股價資料...'):
+        download_data()
+    df = combine_close_prices()
+    return df
 
-#兩個開頭底線是內建的
+def run_streamlit_app():
+    st.set_page_config(page_title="股價儀表板", page_icon="📈", layout="wide")
+    st.title("📈 台灣股價儀表板")
+    st.write("這是一個互動式的儀表板，用來視覺化分析您所選擇的台灣股票。")
+
+    df = load_data()
+
+    if df.empty:
+        st.error("無法載入資料，請檢查 'data' 資料夾或執行環境。")
+        return
+
+    # --- Sidebar Controls ---
+    st.sidebar.header("控制面板")
+    all_stocks = df.columns.tolist()
+    selected_stocks = st.sidebar.multiselect(
+        "選擇股票:", options=all_stocks, default=all_stocks[:2]
+    )
+
+    # 日期範圍選擇
+    min_date = df.index.min()
+    max_date = df.index.max()
+    selected_date_range = st.sidebar.date_input(
+        "選擇日期範圍:",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+        format="YYYY-MM-DD"
+    )
+
+    # 技術分析選項
+    st.sidebar.subheader("技術分析")
+    show_ma = st.sidebar.checkbox("顯示移動平均線 (MA)")
+    if show_ma:
+        ma_period = st.sidebar.slider("移動平均天數:", 5, 100, 20)
+
+    # --- Main Panel ---
+    if not selected_stocks:
+        st.warning("請從側邊欄選擇至少一檔股票。")
+    else:
+        # 根據使用者選擇過濾資料
+        start_date, end_date = selected_date_range
+        filtered_df = df.loc[start_date:end_date, selected_stocks]
+
+        # 準備繪圖用的 DataFrame
+        plot_df = filtered_df.copy()
+        
+        # 如果勾選，則計算並加入移動平均線
+        if show_ma:
+            for stock in selected_stocks:
+                plot_df[f'{stock}_{ma_period}日MA'] = plot_df[stock].rolling(window=ma_period).mean()
+
+        # Display interactive chart
+        st.subheader("股價收盤價走勢圖")
+        fig = px.line(plot_df, x=plot_df.index, y=plot_df.columns,
+                      labels={'value': '股價 (TWD)', 'Date': '日期', 'variable': '圖例'})
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 顯示最新股價與漲跌幅
+        st.subheader("最新股價與單日漲跌")
+        if len(filtered_df) > 1:
+            latest_row = filtered_df.iloc[-1]
+            previous_row = filtered_df.iloc[-2]
+            
+            cols = st.columns(len(selected_stocks))
+            for i, stock in enumerate(selected_stocks):
+                with cols[i]:
+                    latest_price = latest_row[stock]
+                    price_change = latest_price - previous_row[stock]
+                    percent_change = (price_change / previous_row[stock]) * 100
+                    st.metric(
+                        label=stock, 
+                        value=f"{latest_price:,.2f} TWD",
+                        delta=f"{price_change:,.2f} ({percent_change:.2f}%)"
+                    )
+        else:
+            st.info("需要至少兩天資料才能計算漲跌幅。")
+
+        # Display data table
+        st.subheader("股價資料預覽")
+        st.dataframe(filtered_df.sort_index(ascending=False))
+
+    st.sidebar.success("介面設計完成！您可以開始互動操作。")
+
 if __name__ == '__main__':
-    main()    
+    run_streamlit_app()
