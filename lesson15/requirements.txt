@@ -1,8 +1,5 @@
-pandas
-numpy
-matplotlib 
-seaborn
-openpyxl
-scipy
-yfinance
+plotly
 streamlit
+numpy
+pandas
+yfinance
